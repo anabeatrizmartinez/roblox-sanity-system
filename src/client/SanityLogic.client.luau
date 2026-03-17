@@ -1,17 +1,15 @@
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LOCAL_PLAYER = Players.LocalPlayer
 
-local SANITY_ATTRIBUTE_NAME = "Sanity"
-local SANITY_MIN = 0
-local SANITY_MAX = 100
+local SanityConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SanityConfig"))
+local UpdateSanityState = ReplicatedStorage:WaitForChild(SanityConfig.UpdateSanityStateEventName) :: RemoteEvent
 
-local LIGHT_SOURCES_FOLDER_NAME = "LightSources"
-local DETECTION_RANGE = 15
+local LIGHT_SOURCES_FOLDER_NAME = SanityConfig.LightSourcesFolderName
+local DETECTION_RANGE = SanityConfig.LightDetectionRange
 
-local DRAIN_PER_SECOND = 5
-local RECOVERY_PER_SECOND = 10
-local LOOP_INTERVAL_SECONDS = 1
+local LOOP_INTERVAL_SECONDS = SanityConfig.LoopIntervalSeconds
 
 -- Locate the character root so distance to light can be measured.
 local function getCharacterRootPosition(character: Model): Vector3?
@@ -56,46 +54,43 @@ local function getNearestLightDistance(fromPosition: Vector3): number?
 	return nearest
 end
 
--- Read the current Sanity value and fall back to the maximum when missing.
-local function getSanity(): number
-	local current = LOCAL_PLAYER:GetAttribute(SANITY_ATTRIBUTE_NAME)
-	if typeof(current) ~= "number" then
-		return SANITY_MAX
-	end
-	return current
-end
-
--- Write a clamped Sanity value back onto the player attribute.
-local function setSanity(value: number)
-	LOCAL_PLAYER:SetAttribute(SANITY_ATTRIBUTE_NAME, math.clamp(value, SANITY_MIN, SANITY_MAX))
-end
-
--- Ensure the player always starts with a valid Sanity value.
-if LOCAL_PLAYER:GetAttribute(SANITY_ATTRIBUTE_NAME) == nil then
-	setSanity(SANITY_MAX)
-end
-
 -- Periodically adjust Sanity based on distance to the nearest light source.
+local lastSentIsInLight: boolean? = nil
 while true do
+	-- Get the character.
 	local character = LOCAL_PLAYER.Character
-	if character then
-		local rootPosition = getCharacterRootPosition(character)
-		if rootPosition then
-			local nearestDistance = getNearestLightDistance(rootPosition)
-			local currentSanity = getSanity()
+	if not character then
+		task.wait(LOOP_INTERVAL_SECONDS)
+		continue
+	end
 
-			local nextSanity = currentSanity
+	-- Get the humanoid.
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		task.wait(LOOP_INTERVAL_SECONDS)
+		continue
+	end
 
-			if nearestDistance == nil then
-				nextSanity = currentSanity - DRAIN_PER_SECOND * LOOP_INTERVAL_SECONDS
-			elseif nearestDistance > DETECTION_RANGE then
-				nextSanity = currentSanity - DRAIN_PER_SECOND * LOOP_INTERVAL_SECONDS
-			else
-				nextSanity = currentSanity + RECOVERY_PER_SECOND * LOOP_INTERVAL_SECONDS
-			end
+	-- Stop all server updates on death by not sending events.
+	if humanoid.Health <= 0 then
+		task.wait(LOOP_INTERVAL_SECONDS)
+		continue
+	end
 
-			setSanity(nextSanity)
-		end
+	-- Get the root position of the character.
+	local rootPosition = getCharacterRootPosition(character)
+	if not rootPosition then
+		task.wait(LOOP_INTERVAL_SECONDS)
+		continue
+	end
+
+	local nearestDistance = getNearestLightDistance(rootPosition)
+	local isInLight = nearestDistance ~= nil and nearestDistance <= DETECTION_RANGE
+
+	-- Send the sanity state to the server.
+	if lastSentIsInLight == nil or lastSentIsInLight ~= isInLight then
+		lastSentIsInLight = isInLight
+		UpdateSanityState:FireServer(isInLight)
 	end
 
 	task.wait(LOOP_INTERVAL_SECONDS)
