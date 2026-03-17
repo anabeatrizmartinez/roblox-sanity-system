@@ -6,3 +6,16 @@
 /*.rbxl.lock
 
 sourcemap.json
+
+# Cursor & IDE
+.cursor/
+.vscode/
+
+# Rojo & Tools
+/aftman.toml
+/bin/
+node_modules/
+.DS_Store
+
+# Luau & Linting
+.lua-urp/
